@@ -7,6 +7,7 @@ use rouille::router;
 use std::collections::HashMap;
 mod request;
 
+
 const BASE_PORT: u16 = 8000;
 const N: u16 = 16;
 const HOST: &str = "0.0.0.0";
@@ -52,50 +53,10 @@ impl Node {
         };
     }
 
-    fn new_server(&self, hostname: &str){
-        let mut full_addr = String::from(hostname); full_addr.push_str(":"); full_addr.push_str(&self.port.to_string());
-        println!("Starting node #{} on {}", self.id,  full_addr);
-        let node_clone = self.clone();
-        // The `start_server` starts listening forever on the given address.
-        rouille::start_server(full_addr, move |request| {
-            router!(request,
-                (GET) (/{key: String}) => {
-                    let target_port = node_clone.lookup(key.to_string());
-                    if target_port < 0 {
-                        return rouille::Response::text("not found\n");
-                    }
-                    if node_clone.am_i_the_node(target_port as u16) {
-                        println!("hey you found me! Here are my specs:\n{}", &node_clone.to_string());
-                        match node_clone.data.get(&key.to_string()) {
-                            Some(value) => {
-                                return rouille::Response::text(value);
-                            },
-                            _ => {
-                                let mut resp_text = String::from("key should be inside node with port: ");
-                                resp_text.push_str(&target_port.to_string());
-                                resp_text.push_str(" but was not found\n");
-                                return rouille::Response::text("not found\n");
-                            },
-                        }      
-                    }
-
-                    println!("making last request: http://{}:{}/{}", HOST, target_port, key);
-                    let result = request::get(HOST.to_string(), target_port as u16, key);
-                    if result == "error while parsing body" || result == "error while making request" {
-                        println!("{}", result);
-                        return rouille::Response::text("not found\n")
-                    }
-
-                    rouille::Response::text(&*result)
-                },
-
-                _ => rouille::Response::empty_404()
-            )
-        });
-    }
 
     // lookup returns the target port that is closer or is the data holder of the key
-    fn lookup(&self, key: String) -> i16{
+    fn lookup(&self, key: String) -> i16
+    {
         println!("Node #{}: calculating which node is holding the {} key...", self.id, key);
         let hash = gen_hash(key.clone());
         let node_id: u16 = hash.parse().unwrap();
@@ -137,27 +98,79 @@ impl Node {
             },
             _ => return -1
         }
-
-        // let mut address = String::from("http://");address.push_str(HOST);
-        // address.push_str(":"); address.push_str(&(BASE_PORT+nearest_node).to_string());
-        // let mut endpoint = String::from(address); endpoint.push_str("/"); endpoint.push_str(&key.to_string());
-        // println!("Node #{}: Making request: {}", self.id, endpoint);
-        // // client connect to address...
-        // match reqwest::blocking::get(endpoint) {
-        //     Ok(resp) => {
-        //         match resp.text() {
-        //             Ok(body) => {
-        //                 println!("Node #{}: Asking node #{} for the key...\n response: {}", self.id, nearest_node, body);
-        //                 return body.parse().unwrap();
-        //             },
-        //             _ => {}
-        //         }
-        //     }
-        //     Err(s) => {
-        //         println!("Node #{}: Asking node #{} for the key...\n response: {}", self.id, nearest_node, s);
-        //     },
-        // }
     }
+}
+
+fn new_server(node: &mut Node, hostname: &str){
+    let mut full_addr = String::from(hostname); full_addr.push_str(":"); full_addr.push_str(&node.port.to_string());
+    println!("Starting node #{} on {}", node.id,  full_addr);
+    let node_clone = node.clone();
+    // The `start_server` starts listening forever on the given address.
+
+    rouille::start_server(full_addr, move |request| {
+        router!(request,
+            (GET) (/{key: String}) => {
+                let target_port = node_clone.lookup(key.to_string());
+                if target_port < 0 {
+                    return rouille::Response::text("not found\n");
+                }
+                if node_clone.am_i_the_node(target_port as u16) {
+                    println!("hey you found me! Here are my specs:\n{}", &node_clone.to_string());
+                    match node_clone.data.get(&key.to_string()) {
+                        Some(value) => {
+                            return rouille::Response::text(value);
+                        },
+                        _ => {
+                            let mut resp_text = String::from("key should be inside node with port: ");
+                            resp_text.push_str(&target_port.to_string()); resp_text.push_str(" ");
+                            resp_text.push_str("but was not found\n");
+                            println!("{}", resp_text);
+                            return rouille::Response::text("not found\n");
+                        },
+                    }      
+                }
+
+                println!("making last request: http://{}:{}/{}", HOST, target_port, key);
+                let result = request::get(HOST.to_string(), target_port as u16, key);
+                if result == "error while parsing body" || result == "error while making request" {
+                    println!("{}", result);
+                    return rouille::Response::text("not found\n")
+                }
+
+                rouille::Response::text(&*result)
+            },
+
+            (POST) (/{key: String}/{value: String}) => {
+                let target_port = node_clone.lookup(key.to_string());
+                if target_port < 0 {
+                    return rouille::Response::text("not found\n");
+                }
+                if node_clone.am_i_the_node(target_port as u16) {
+                    println!("inserting key {} into node:\n{}", key, &node_clone.to_string());
+                    // insert key
+                    //  node.data.insert(key, value); -> NAO FUNCIONA
+                    return rouille::Response::empty_204();
+                }
+
+                println!("making last request: http://{}:{}/{}", HOST, target_port, key);
+                if request::set(HOST.to_string(), target_port as u16, key.clone(), value.clone()) {
+                    let mut rsp = String::from("successfully inserted key ");
+                    rsp.push_str(&key.clone());  
+                    rsp.push_str(" with value ");  rsp.push_str(&value.clone()); 
+                    rsp.push_str(" on node with port "); rsp.push_str(&target_port.to_string());
+                    let mut resp = rouille::Response::text(rsp);
+                    resp.status_code = 201;
+                    return resp;
+                }
+
+                let mut resp = rouille::Response::text("internal server error");
+                resp.status_code = 505;
+                resp
+            },
+
+            _ => rouille::Response::empty_404()
+        )
+    });
 }
 
 fn gen_hash(key: String) -> String{
@@ -174,7 +187,7 @@ fn start_network() {
     let mut nodes: Vec<Node> = Vec::new();
 
     for i in 0..N {
-        let node = create_node(i);
+        let mut node: Node = create_node(i);
         nodes.push(node.clone());
         let job = fork();
         match job.expect("Fork failed: Unable to create child process"){
@@ -184,7 +197,7 @@ fn start_network() {
             },
             _ => { 
                 // child
-                node.new_server(HOST);
+                new_server(&mut node, HOST);
             },
         }
     }

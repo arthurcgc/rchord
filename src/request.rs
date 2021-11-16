@@ -25,3 +25,24 @@ pub fn get(host: String, port: u16, key: String) -> String{
         },
     }
 }
+
+pub fn set(host: String, port: u16, key: String, value: String) -> bool{
+    let mut address = String::from("http://");address.push_str(&host);
+    // &(BASE_PORT+nearest_node).to_string()
+    address.push_str(":"); address.push_str(&port.to_string());
+    let mut endpoint = String::from(address);
+    endpoint.push_str("/"); endpoint.push_str(&key); 
+    endpoint.push_str("/"); endpoint.push_str(&value);
+    // println!("Node #{}: Making request: {}", self.id, endpoint);
+    // client connect to address...
+    let client = reqwest::blocking::Client::new();
+    match client.post(endpoint).send() {
+        Ok(resp) => {
+            return resp.status().is_success();
+        },
+        Err(s) => {
+            println!("error: {}", s);
+            return false;
+        },
+    }
+}
